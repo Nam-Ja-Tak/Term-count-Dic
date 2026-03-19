@@ -3,16 +3,17 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import docx
+import PyPDF2  # นำเข้าไลบรารีสำหรับอ่าน PDF
 import re
 from collections import Counter
 import io
+from deep_translator import GoogleTranslator  # นำเข้าไลบรารีสำหรับแปลภาษา
 
 # ---------------------------------------------------------
 # Section 1: การตั้งค่าหน้าเว็บและกำหนด Stopwords
 # ---------------------------------------------------------
 st.set_page_config(page_title="เครื่องมือวิเคราะห์คำศัพท์สำหรับนักแปล", layout="wide")
 
-# รายการ Stopwords ภาษาอังกฤษเบื้องต้น (สามารถเพิ่มคำที่ต้องการละเว้นได้ที่นี่)
 STOPWORDS = set([
     "i", "me", "my", "myself", "we", "our", "ours", "ourselves", "you", "your", "yours", "yourself", 
     "yourselves", "he", "him", "his", "himself", "she", "her", "hers", "herself", "it", "its", "itself", 
@@ -39,32 +40,53 @@ def read_docx_file(uploaded_file):
     full_text = [para.text for para in doc.paragraphs]
     return '\n'.join(full_text)
 
+def read_pdf_file(uploaded_file):
+    """อ่านเนื้อหาจากไฟล์ .pdf (ฟีเจอร์ใหม่)"""
+    reader = PyPDF2.PdfReader(uploaded_file)
+    text = ""
+    for page in reader.pages:
+        text += page.extract_text() + "\n"
+    return text
+
 def process_text(text):
     """ทำความสะอาดข้อความ แยกคำ และนับความถี่"""
-    # ทำให้เป็นตัวพิมพ์เล็กทั้งหมด
     text = text.lower()
-    # ดึงมาเฉพาะคำที่เป็นภาษาอังกฤษ (ตัวอักษร a-z)
     words = re.findall(r'\b[a-z]+\b', text)
-    # กรอง stopwords ออก
     filtered_words = [word for word in words if word not in STOPWORDS]
-    # นับจำนวนคำ
     return Counter(filtered_words)
+
+@st.cache_data(show_spinner=False)
+def translate_words(words_list):
+    """ฟังก์ชันสำหรับแปลคำศัพท์ด้วย Google Translate"""
+    translator = GoogleTranslator(source='en', target='th')
+    translations = []
+    for word in words_list:
+        try:
+            # แปลทีละคำ
+            translated = translator.translate(word)
+            translations.append(translated)
+        except Exception as e:
+            translations.append("แปลไม่ได้")
+    return translations
 
 # ---------------------------------------------------------
 # Section 3: ส่วนแสดงผล UI บน Streamlit
 # ---------------------------------------------------------
 st.title("📝 ผู้ช่วยวิเคราะห์คำศัพท์สำหรับนักแปล (Vocabulary Analyzer)")
-st.write("อัปโหลดไฟล์งานแปลของคุณ (.txt หรือ .docx) เพื่อดูคำศัพท์ที่ใช้บ่อยที่สุด พร้อมตัวอย่างบริบทการใช้งาน")
+st.write("อัปโหลดไฟล์งานแปลของคุณ (.txt, .docx หรือ .pdf) เพื่อดูคำศัพท์ที่ใช้บ่อยที่สุด พร้อมคำแปลจาก Google Translate และดาวน์โหลดเป็น Glossary")
 
-# 1. ให้ user upload ไฟล์
-uploaded_file = st.file_uploader("เลือกไฟล์เอกสาร (.txt หรือ .docx)", type=["txt", "docx"])
+# เพิ่ม pdf เข้าไปในชนิดไฟล์ที่รองรับ
+uploaded_file = st.file_uploader("เลือกไฟล์เอกสาร (.txt, .docx, .pdf)", type=["txt", "docx", "pdf"])
 
 if uploaded_file is not None:
+    text_data = ""
     # ตรวจสอบประเภทไฟล์และดึงข้อความ
     if uploaded_file.name.endswith(".txt"):
         text_data = read_text_file(uploaded_file)
     elif uploaded_file.name.endswith(".docx"):
         text_data = read_docx_file(uploaded_file)
+    elif uploaded_file.name.endswith(".pdf"):
+        text_data = read_pdf_file(uploaded_file)
     
     if text_data:
         # ประมวลผลและดึง Top 30 คำศัพท์
@@ -77,8 +99,9 @@ if uploaded_file is not None:
             # สร้าง Pandas DataFrame
             df = pd.DataFrame(top_30_words, columns=['คำศัพท์ (Word)', 'ความถี่ (Frequency)'])
             
-            # สร้าง URL ของ Cambridge Dictionary สำหรับแต่ละคำ
-            df['อ้างอิงและตัวอย่าง (Cambridge Dictionary)'] = "https://dictionary.cambridge.org/dictionary/english/" + df['คำศัพท์ (Word)']
+            with st.spinner('กำลังแปลคำศัพท์ กรุณารอสักครู่...'):
+                # เรียกใช้ฟังก์ชันแปลภาษาและสร้างคอลัมน์ใหม่
+                df['คำแปล (Translation)'] = translate_words(df['คำศัพท์ (Word)'].tolist())
 
             st.markdown("---")
             
@@ -92,7 +115,6 @@ if uploaded_file is not None:
             plt.xticks(rotation=45, ha='right')
             ax.set_ylabel('ความถี่ (ครั้ง)')
             ax.set_title('Top 30 Most Frequent Words')
-            # ตัดขอบกราฟให้สวยงาม
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
             
@@ -101,25 +123,23 @@ if uploaded_file is not None:
             st.markdown("---")
             
             # ---------------------------------------------------------
-            # Section 5: ตารางข้อมูลและปุ่ม Download
+            # Section 5: ตารางข้อมูล Glossary และปุ่ม Download (Excel)
             # ---------------------------------------------------------
-            st.subheader("📋 รายละเอียดคำศัพท์และบริบท")
+            st.subheader("📋 ตารางคำศัพท์และคำแปล (Glossary)")
             
-            # แสดง DataFrame พร้อมทำให้คอลัมน์ลิงก์กดได้
-            st.dataframe(
-                df,
-                column_config={
-                    "อ้างอิงและตัวอย่าง (Cambridge Dictionary)": st.column_config.LinkColumn("คลิกเพื่อดู Context (Cambridge Dictionary)")
-                },
-                hide_index=True,
-                use_container_width=True
-            )
+            # จัดเรียงคอลัมน์ใหม่ให้ดูง่ายขึ้น
+            df_display = df[['คำศัพท์ (Word)', 'คำแปล (Translation)', 'ความถี่ (Frequency)']]
+            st.dataframe(df_display, hide_index=True, use_container_width=True)
             
-            # ปุ่ม Download ผลลัพธ์เป็น .csv
-            csv = df.to_csv(index=False).encode('utf-8')
+            # แปลง DataFrame เป็นไฟล์ Excel ในหน่วยความจำ (Memory)
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                df_display.to_excel(writer, index=False, sheet_name='Glossary')
+            
+            # ปุ่ม Download ผลลัพธ์เป็น .xlsx
             st.download_button(
-                label="📥 ดาวน์โหลดข้อมูลเป็นไฟล์ .CSV",
-                data=csv,
-                file_name='top_30_vocabulary.csv',
-                mime='text/csv',
+                label="📥 ดาวน์โหลดข้อมูลเป็นไฟล์ Excel (.xlsx)",
+                data=buffer.getvalue(),
+                file_name='top_30_vocabulary_glossary.xlsx',
+                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             )
