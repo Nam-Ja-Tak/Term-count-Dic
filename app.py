@@ -46,7 +46,7 @@ def process_text(text):
     # ดึงมาเฉพาะคำที่เป็นภาษาอังกฤษ (ตัวอักษร a-z)
     words = re.findall(r'\b[a-z]+\b', text)
     # กรอง stopwords ออก
-    filtered_words = [word for word in words if word not int STOPWORDS]
+    filtered_words = [word for word in words if word not in STOPWORDS]
     # นับจำนวนคำ
     return Counter(filtered_words)
 
