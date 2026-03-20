@@ -1,15 +1,14 @@
-# app.py
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import docx
-import PyPDF2
+import pdfplumber
 import re
 from collections import Counter
 import io
 from deep_translator import GoogleTranslator
-from pythainlp.tokenize import word_tokenize  # เพิ่มตัวตัดคำภาษาไทย
-from pythainlp.corpus import thai_stopwords  # เพิ่ม Stopwords ภาษาไทย
+from pythainlp.tokenize import word_tokenize
+from pythainlp.corpus import thai_stopwords
 
 # ---------------------------------------------------------
 # Section 1: ระบบจัดการ 2 ภาษา (Language Mapping)
@@ -33,7 +32,7 @@ LANG_TEXTS = {
         "col_context": "บริบท",
         "col_collocate": "คำที่ใช้คู่กัน",
         "btn_download": "📥 ดาวน์โหลดไฟล์ Excel (.xlsx)",
-        "no_word_warn": "ไม่พบคำศัพท์ในไฟล์นี้",
+        "no_word_warn": "ไม่พบคำศัพท์ หรือไม่สามารถอ่านข้อความจากไฟล์นี้ได้",
     },
     "EN": {
         "title": "📝 Multi-lang Vocab Analyzer",
@@ -53,7 +52,7 @@ LANG_TEXTS = {
         "col_context": "Context",
         "col_collocate": "Collocates",
         "btn_download": "📥 Download Excel (.xlsx)",
-        "no_word_warn": "No words found in this file.",
+        "no_word_warn": "No words found or unable to read text from this file.",
     }
 }
 
@@ -64,26 +63,29 @@ ENG_STOPWORDS = set(["i", "me", "my", "we", "our", "you", "your", "he", "she", "
 TH_STOPWORDS = set(thai_stopwords())
 
 def get_text_from_file(uploaded_file):
+    text = ""
     try:
         if uploaded_file.name.endswith(".txt"):
-            return uploaded_file.getvalue().decode("utf-8")
+            text = uploaded_file.getvalue().decode("utf-8")
         elif uploaded_file.name.endswith(".docx"):
             doc = docx.Document(uploaded_file)
-            return '\n'.join([p.text for p in doc.paragraphs])
+            text = '\n'.join([p.text for p in doc.paragraphs])
         elif uploaded_file.name.endswith(".pdf"):
-            reader = PyPDF2.PdfReader(uploaded_file)
-            return '\n'.join([page.extract_text() for page in reader.pages])
-    except: return ""
-    return ""
+            with pdfplumber.open(uploaded_file) as pdf:
+                for page in pdf.pages:
+                    extracted = page.extract_text()
+                    if extracted:
+                        text += extracted + "\n"
+    except Exception as e:
+        st.error(f"เกิดข้อผิดพลาดในการอ่านไฟล์: {e}")
+    return text
 
 def custom_tokenize(text):
     """ฟังก์ชันตัดคำที่รองรับทั้งไทยและอังกฤษ"""
-    # ตัดคำภาษาไทยและอังกฤษผสมกัน
     tokens = word_tokenize(text, engine="newmm")
     clean_tokens = []
     for t in tokens:
         t = t.strip().lower()
-        # กรองเอาเฉพาะคำ (ไม่ใช่สัญลักษณ์หรือตัวเลขตัวเดียว) และไม่อยู่ใน Stopwords
         if len(t) > 1 and t not in ENG_STOPWORDS and t not in TH_STOPWORDS and not re.match(r'^\d+$', t):
             clean_tokens.append(t)
     return clean_tokens
@@ -119,7 +121,8 @@ uploaded_file = st.file_uploader(txt["upload_label"], type=["txt", "docx", "pdf"
 
 if uploaded_file:
     full_text = get_text_from_file(uploaded_file)
-    if full_text:
+    
+    if full_text and full_text.strip():
         with st.spinner(txt["processing"]):
             # ตัดคำทั้งหมด
             all_tokens = custom_tokenize(full_text)
@@ -127,7 +130,7 @@ if uploaded_file:
             
             # 1. Estimation
             st.subheader(txt["time_title"])
-            est_hours = total_word_count / trans_speed
+            est_hours = total_word_count / trans_speed if trans_speed > 0 else 0
             c1, c2 = st.columns(2)
             c1.metric(txt["total_words"], f"{total_word_count:,}")
             c2.metric(txt["est_time"], f"{est_hours:.1f} hrs", f"{est_hours/8:.1f} days")
@@ -144,9 +147,7 @@ if uploaded_file:
                 # 3. Table & Translation
                 df = pd.DataFrame(top_30, columns=[txt["col_word"], txt["col_freq"]])
                 
-                # ระบบสลับทิศทางการแปลอัตโนมัติ
                 def smart_translate(word):
-                    # ถ้าเป็นภาษาอังกฤษ ให้แปลเป็นไทย | ถ้าเป็นไทย ให้แปลเป็นอังกฤษ
                     is_english = bool(re.match(r'^[a-zA-Z]+$', word))
                     source_lang = 'en' if is_english else 'th'
                     target_lang = 'th' if is_english else 'en'
@@ -168,11 +169,12 @@ if uploaded_file:
                             near.extend(tokens[start:i] + tokens[i+1:end])
                     res = [c[0] for c in Counter(near).most_common(2)]
                     return ", ".join(res) if res else "-"
+                
                 df[txt["col_collocate"]] = [quick_col(w, all_tokens) for w in df[txt["col_word"]]]
 
                 st.subheader(txt["chart_title"])
-                # แก้ไขฟอนต์กราฟให้รองรับภาษาไทย (เลือกฟอนต์พื้นฐานในระบบ)
-                plt.rcParams['font.family'] = 'Tahoma' # หรือ 'Arial Unicode MS' สำหรับ Mac
+                # ตั้งค่าฟอนต์กราฟ
+                plt.rcParams['font.family'] = 'Tahoma' 
                 fig, ax = plt.subplots(figsize=(10, 4))
                 ax.bar(df[txt["col_word"]], df[txt["col_freq"]], color='#4C83EE')
                 plt.xticks(rotation=45)
@@ -185,3 +187,7 @@ if uploaded_file:
                 with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                     df.to_excel(writer, index=False)
                 st.download_button(txt["btn_download"], buffer.getvalue(), "glossary.xlsx")
+            else:
+                st.warning(txt["no_word_warn"])
+    else:
+        st.warning(txt["no_word_warn"])
