@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import docx
-import pdfplumber
+import fitz  # นำเข้า PyMuPDF (สุดยอดตัวอ่าน PDF)
 import re
 from collections import Counter
 import io
@@ -32,7 +32,7 @@ LANG_TEXTS = {
         "col_context": "บริบท",
         "col_collocate": "คำที่ใช้คู่กัน",
         "btn_download": "📥 ดาวน์โหลดไฟล์ Excel (.xlsx)",
-        "no_word_warn": "ไม่พบคำศัพท์ หรือไม่สามารถอ่านข้อความจากไฟล์นี้ได้",
+        "no_word_warn": "ไม่พบคำศัพท์ หรือไม่สามารถอ่านข้อความจากไฟล์นี้ได้ (อาจเป็นไฟล์รูปภาพ)",
     },
     "EN": {
         "title": "📝 Multi-lang Vocab Analyzer",
@@ -52,7 +52,7 @@ LANG_TEXTS = {
         "col_context": "Context",
         "col_collocate": "Collocates",
         "btn_download": "📥 Download Excel (.xlsx)",
-        "no_word_warn": "No words found or unable to read text from this file.",
+        "no_word_warn": "No words found or unable to read text from this file (might be an image PDF).",
     }
 }
 
@@ -71,11 +71,11 @@ def get_text_from_file(uploaded_file):
             doc = docx.Document(uploaded_file)
             text = '\n'.join([p.text for p in doc.paragraphs])
         elif uploaded_file.name.endswith(".pdf"):
-            with pdfplumber.open(uploaded_file) as pdf:
-                for page in pdf.pages:
-                    extracted = page.extract_text()
-                    if extracted:
-                        text += extracted + "\n"
+            # ใช้ PyMuPDF ในการอ่านเนื้อหา ซึ่งแม่นยำกว่ามาก
+            pdf_bytes = uploaded_file.read()
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            for page in doc:
+                text += page.get_text() + "\n"
     except Exception as e:
         st.error(f"เกิดข้อผิดพลาดในการอ่านไฟล์: {e}")
     return text
@@ -173,7 +173,7 @@ if uploaded_file:
                 df[txt["col_collocate"]] = [quick_col(w, all_tokens) for w in df[txt["col_word"]]]
 
                 st.subheader(txt["chart_title"])
-                # ตั้งค่าฟอนต์กราฟ
+                # ตั้งค่าฟอนต์กราฟให้รองรับภาษาไทย
                 plt.rcParams['font.family'] = 'Tahoma' 
                 fig, ax = plt.subplots(figsize=(10, 4))
                 ax.bar(df[txt["col_word"]], df[txt["col_freq"]], color='#4C83EE')
