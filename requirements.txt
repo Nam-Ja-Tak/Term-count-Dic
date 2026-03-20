@@ -5,4 +5,4 @@ python-docx
 PyPDF2
 deep-translator
 openpyxl
-nltk
+pythainlp
