@@ -2,7 +2,7 @@ streamlit
 pandas
 matplotlib
 python-docx
-pdfplumber
+PyMuPDF
 deep-translator
 openpyxl
 pythainlp
