@@ -1,8 +1,7 @@
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
 import docx
-import fitz  # นำเข้า PyMuPDF (สุดยอดตัวอ่าน PDF)
+import fitz  # PyMuPDF
 import re
 from collections import Counter
 import io
@@ -71,7 +70,6 @@ def get_text_from_file(uploaded_file):
             doc = docx.Document(uploaded_file)
             text = '\n'.join([p.text for p in doc.paragraphs])
         elif uploaded_file.name.endswith(".pdf"):
-            # ใช้ PyMuPDF ในการอ่านเนื้อหา ซึ่งแม่นยำกว่ามาก
             pdf_bytes = uploaded_file.read()
             doc = fitz.open(stream=pdf_bytes, filetype="pdf")
             for page in doc:
@@ -81,7 +79,6 @@ def get_text_from_file(uploaded_file):
     return text
 
 def custom_tokenize(text):
-    """ฟังก์ชันตัดคำที่รองรับทั้งไทยและอังกฤษ"""
     tokens = word_tokenize(text, engine="newmm")
     clean_tokens = []
     for t in tokens:
@@ -124,11 +121,9 @@ if uploaded_file:
     
     if full_text and full_text.strip():
         with st.spinner(txt["processing"]):
-            # ตัดคำทั้งหมด
             all_tokens = custom_tokenize(full_text)
             total_word_count = len(all_tokens)
             
-            # 1. Estimation
             st.subheader(txt["time_title"])
             est_hours = total_word_count / trans_speed if trans_speed > 0 else 0
             c1, c2 = st.columns(2)
@@ -139,12 +134,10 @@ if uploaded_file:
             top_30 = word_counts.most_common(30)
             
             if top_30:
-                # 2. Summary
                 st.subheader(txt["summary_title"])
                 summary = get_statistical_summary(full_text, dict(top_30))
                 st.info(summary if summary else "ไม่สามารถสรุปได้")
 
-                # 3. Table & Translation
                 df = pd.DataFrame(top_30, columns=[txt["col_word"], txt["col_freq"]])
                 
                 def smart_translate(word):
@@ -157,7 +150,6 @@ if uploaded_file:
 
                 df[txt["col_trans"]] = [smart_translate(w) for w in df[txt["col_word"]]]
                 
-                # Context & Collocates
                 sentences = re.split(r'(?<=[.!?\n])\s+', full_text)
                 df[txt["col_context"]] = [next((s.strip() for s in sentences if w in s.lower()), "-") for w in df[txt["col_word"]]]
                 
@@ -172,13 +164,14 @@ if uploaded_file:
                 
                 df[txt["col_collocate"]] = [quick_col(w, all_tokens) for w in df[txt["col_word"]]]
 
+                # ------ ส่วนที่แก้ไขเรื่องกราฟ ------
                 st.subheader(txt["chart_title"])
-                # ตั้งค่าฟอนต์กราฟให้รองรับภาษาไทย
-                plt.rcParams['font.family'] = 'Tahoma' 
-                fig, ax = plt.subplots(figsize=(10, 4))
-                ax.bar(df[txt["col_word"]], df[txt["col_freq"]], color='#4C83EE')
-                plt.xticks(rotation=45)
-                st.pyplot(fig)
+                
+                # นำคำศัพท์ไปเป็นแกน x (Index) เพื่อใช้กับ st.bar_chart 
+                chart_data = df.set_index(txt["col_word"])[[txt["col_freq"]]]
+                # st.bar_chart รองรับภาษาไทย 100% เพราะเรนเดอร์ผ่านเบราว์เซอร์
+                st.bar_chart(chart_data)
+                # -----------------------------------
 
                 st.subheader(txt["table_title"])
                 st.dataframe(df, use_container_width=True, hide_index=True)
